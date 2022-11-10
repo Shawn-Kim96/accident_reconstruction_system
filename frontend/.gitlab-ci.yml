@@ -1,0 +1,166 @@
+image:
+  name: ${CI_REGISTRY}/registry/util:buildkit-v0.7.1
+  entrypoint: [""]
+
+stages:
+  # - cache
+  - build
+  - package
+  - deploy
+  - test
+
+variables:
+  IMAGE: ${CI_REGISTRY_IMAGE}:${CI_COMMIT_TAG}
+  BUILD_KIT_HOST: tcp://buildkitd.ci
+  BUILD_KIT_PORT: 1234
+  SERVICE: your_service # must be overriding specific service name (usually it would be aws account name)
+  BRANCH: ${CI_COMMIT_REF_NAME}
+  CLUSTER: dev
+  SONAR_TOKEN: "243859391b8c8a77e8b6e73d0906a604b251f954"
+  SONAR_HOST_URL: "http://sonarqube-sonarqube.sonar:9000"
+  CLAIR_OUTPUT: High
+  MY_APP_NAME: accident-web
+
+before_script:
+  - mkdir -p /root/.docker;
+  - mkdir -p .test
+  - echo "{\"auths\":{\"$CI_REGISTRY\":{\"username\":\"$CI_REGISTRY_USER\",\"password\":\"$CI_REGISTRY_PASSWORD\"}}}" > /root/.docker/config.json;
+  - if [ "$BRANCH" == "develop" ]; then export OVERLAY=dev; export CLUSTER=dev; fi
+  - if [ "$BRANCH" == "int" ]; then export OVERLAY=int; export CLUSTER=int; fi
+  - if [ "$BRANCH" == "stage" ]; then export OVERLAY=stage; export CLUSTER=stage; fi
+  - if [ "$BRANCH" == "real" ]; then export OVERLAY=real; export CLUSTER=real; fi
+  - if [ "$BRANCH" == "deploytest" ]; then export OVERLAY=dev; export CLUSTER=dev; fi
+  - cat /root/.docker/config.json
+
+.cache_node_modules:
+  cache:
+    policy: pull-push
+    key:
+      files:
+        - package.json
+        - yarn.lock
+    paths:
+      - node_modules
+      - dist
+
+.pull_cache_node_modules:
+  cache:
+    policy: pull
+    key:
+      files:
+        - ./frontend/package.json
+        - ./frontend/yarn.lock
+    paths:
+      - ./frontend/node_modules
+      - ./frontend/dist
+      - ./frontend/build
+
+.deploy_task:
+  stage: deploy
+  image: ${CI_REGISTRY}/devops/eks-tools:1.0.0
+  script:
+    - |
+      if [[ ${OVERLAY} == "dev" || ${OVERLAY} == "int"  || ${OVERLAY} == "stage" ]];
+      then
+        export ACCOUNT_NAME=common
+      else
+        export ACCOUNT_NAME=${SERVICE}
+      fi
+    - export ROLE=administrator
+    - export AWS_ACCESS_KEY_ID="" && export AWS_SECRET_ACCESS_KEY=""
+    - ~/vault-auth.sh ${ACCOUNT_NAME} ${ROLE}
+    - export AWS_ACCOUNT=$(aws sts get-caller-identity --query Account --output text --profile ${ACCOUNT_NAME})
+    - aws eks update-kubeconfig --name ${ACCOUNT_NAME}-${CLUSTER} --profile ${ACCOUNT_NAME} --role-arn arn:aws:iam::${AWS_ACCOUNT}:role/VaultAWSRole
+    - cd bootstrap/frontend/kustomize/${APP_NAME}
+    - (cd "overlays/${OVERLAY}" && kustomize edit set image ${APP_NAME}=${CI_REGISTRY_IMAGE}:${CI_COMMIT_REF_NAME}-web${CI_COMMIT_SHORT_SHA})
+    - kustomize build overlays/${OVERLAY} | kubectl apply -f -
+
+# refresh_npm_cache:
+#   stage: cache
+#   image: ${CI_REGISTRY}/registry/util:${IMAGE_NAME}-${IMAGE_VERSION}
+#   script:
+#     - if [ -d "node_modules" ]; then echo "cache exists"; else yarn install; fi
+#   extends: .cache_node_modules
+#   only:
+#     - deploytest
+#     - develop
+#     - int
+#     - stage
+#     - real
+#     - tags
+#     - merge_requests
+
+build:
+  stage: build
+  script:
+    - |
+      buildctl --debug --addr ${BUILD_KIT_HOST}:${BUILD_KIT_PORT} \
+      build  --frontend=dockerfile.v0  \
+      --local context=. --local dockerfile=. \
+      --opt build-arg:PHASE=${OVERLAY} \
+      --opt filename=./frontend/Dockerfile \
+      --output type=image,name=${CI_REGISTRY_IMAGE}:${CI_COMMIT_REF_NAME}-web${CI_COMMIT_SHORT_SHA} \
+      --export-cache type=registry,ref=${CI_REGISTRY_IMAGE}/cache \
+      --import-cache type=registry,ref=${CI_REGISTRY_IMAGE}/cache \
+  variables:
+    APP_NAME: ${MY_APP_NAME}
+  extends: .pull_cache_node_modules
+  only:
+    - deploytest
+    - develop
+    - int
+    - stage
+    - real
+  except:
+    - merge_requests
+
+# package_tag:
+#   stage: package
+#   script:
+#     - |
+#       buildctl --debug --addr tcp://buildkitd.ci:1234 \
+#       build  --frontend=dockerfile.v0  \
+#       --local context=. --local dockerfile=. \
+#       --opt build-arg:PHASE=${OVERLAY} \
+#       --output type=image,name=${CI_REGISTRY_IMAGE}:${CI_COMMIT_REF_NAME}-${CI_COMMIT_TAG},push=true \
+#       --export-cache type=registry,ref=${CI_REGISTRY_IMAGE}/cache \
+#       --import-cache type=registry,ref=${CI_REGISTRY_IMAGE}/cache \
+#   only:
+#     - tags
+#   extends: .pull_cache_node_modules
+
+package:
+  stage: package
+  script:
+    - |
+      buildctl --debug --addr ${BUILD_KIT_HOST}:${BUILD_KIT_PORT} \
+      build  --frontend=dockerfile.v0  \
+      --local context=. --local dockerfile=. \
+      --opt filename=./frontend/Dockerfile \
+      --opt build-arg:PHASE=${OVERLAY} \
+      --output type=image,name=${CI_REGISTRY_IMAGE}:${CI_COMMIT_REF_NAME}-web${CI_COMMIT_SHORT_SHA},push=true \
+      --export-cache type=registry,ref=${CI_REGISTRY_IMAGE}/cache \
+      --import-cache type=registry,ref=${CI_REGISTRY_IMAGE}/cache \
+  variables:
+    APP_NAME: ${MY_APP_NAME}
+  extends: .pull_cache_node_modules
+  only:
+    - deploytest
+    - develop
+    - int
+    - stage
+    - real
+  except:
+    - merge_requests
+
+deploy:
+  image: ${CI_REGISTRY}/devops/eks-tools:1.0.0
+  variables:
+    APP_NAME: ${MY_APP_NAME}
+  extends: .deploy_task
+  only:
+    - deploytest
+    - develop
+    - int
+  except:
+    - merge_requests

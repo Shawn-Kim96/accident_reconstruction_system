@@ -1,0 +1,14 @@
+
+frontend-package:
+  trigger:
+    include: frontend/.gitlab-ci.yml
+    strategy: depend
+  rules:
+    - changes: [ frontend/* ]
+
+backend-package:
+  trigger:
+    include: backend/.gitlab-ci.yml
+    strategy: depend
+  rules:
+    - changes: [ backend/* ]

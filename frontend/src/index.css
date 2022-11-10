@@ -1,0 +1,29 @@
+#components-layout-demo-responsive .logo {
+  height: 32px;
+  margin: 16px;
+  background: rgba(255, 255, 255, 0.2);
+}
+
+.site-layout-sub-header-background {
+  background: #fff;
+}
+
+.site-layout-background {
+  background: #fff;
+}
+
+.logo {
+  font-size: 24px;
+  color: white;
+  font-family: Arial;
+  text-align: center;
+  padding: 10px;
+}
+.map-location-car-list{
+  cursor: pointer;
+}
+.map-location-car-list .ant-list-item.active{
+  background-color: rgb(244, 252, 184);
+  border: 2px solid rgb(196, 222, 0);
+  box-sizing: border-box;
+}

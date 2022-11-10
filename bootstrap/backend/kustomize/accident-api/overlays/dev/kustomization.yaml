@@ -1,0 +1,14 @@
+nameSuffix: -dev
+commonLabels:
+  app.kubernetes.io/instance: accident-api_test
+  app.kubernetes.io/name: accident-api_test
+  app.kubernetes.io/component: accident-api_test
+  app.kubernetes.io/part-of: accident-api_test
+resources:
+  - ../../base
+
+namespace: fii-dev
+patchesStrategicMerge:
+  - patch-deployment.yaml
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization

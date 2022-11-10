@@ -1,0 +1,89 @@
+variables:
+  AWS_ACCOUNT_NAME: common #kubernetes cluster가 있는 aws 계정명
+  MY_APP_NAME: accident-api_test
+  BRANCH: ${CI_COMMIT_REF_NAME}
+  PHASE: ${CI_COMMIT_REF_NAME}
+
+image:
+  name: ${CI_REGISTRY}/registry/util:buildkit-v0.7.1
+  entrypoint: [ "" ]
+
+stages:
+  - package #build된 파일을 docker image로 만들어 buildkitd를 사용해 registry에 등록하는 과정
+  - deploy #dev, int 환경만 사용, stage, real환경은 argocd를 이용
+
+before_script:
+  - mkdir -p /root/.docker;
+  - mkdir -p .test
+  - echo "{\"auths\":{\"$CI_REGISTRY\":{\"username\":\"$CI_REGISTRY_USER\",\"password\":\"$CI_REGISTRY_PASSWORD\"}}}" > /root/.docker/config.json;
+  - if [ "$BRANCH" == "develop" ]; then export OVERLAY=dev; export CLUSTER=dev; fi
+  - if [ "$BRANCH" == "int" ]; then export OVERLAY=int; export CLUSTER=int; fi
+  - if [ "$BRANCH" == "stage" ]; then export OVERLAY=stage; export CLUSTER=stage; fi
+  - if [ "$BRANCH" == "real" ]; then export OVERLAY=real; export CLUSTER=real; fi
+  - if [ "$BRANCH" == "deploytest" ]; then export OVERLAY=dev; export CLUSTER=dev; fi
+  - cat /root/.docker/config.json
+  - echo ========== Info ==========
+  - echo appname=${MY_APP_NAME} branch=${BRANCH} overay=${OVERLAY} cluster=${CLUSTER}
+  # - echo image=${CI_REGISTRY_IMAGE}:${CI_COMMIT_REF_NAME}-${CI_COMMIT_SHORT_SHA}
+  - echo image=${CI_REGISTRY_IMAGE}:${CI_COMMIT_REF_NAME}-${CI_COMMIT_SHORT_SHA}
+  # - echo image=${CI_REGISTRY_IMAGE}/${MY_APP_NAME}:${CI_COMMIT_REF_NAME}-${CI_COMMIT_SHORT_SHA}
+  - echo version=${CI_COMMIT_REF_NAME}-${CI_COMMIT_SHORT_SHA}
+
+.package_backend_task:
+  script:
+    - |
+      buildctl --debug --addr tcp://buildkitd.ci:1234 \
+      build  --frontend=dockerfile.v0  \
+      --local context=. --local dockerfile=. \
+      --opt filename=./backend/Dockerfile \
+      --opt build-arg:PHASE=${PHASE} \
+      --output type=image,name=${CI_REGISTRY_IMAGE}:${CI_COMMIT_REF_NAME}-${CI_COMMIT_SHORT_SHA},push=true \
+      --export-cache type=registry,ref=${CI_REGISTRY_IMAGE}/cache \
+      --import-cache type=registry,ref=${CI_REGISTRY_IMAGE}/cache \
+  cache:
+    key: "${CI_COMMIT_REF_NAME}-${MY_APP_NAME}"
+    policy: pull
+
+.deploy_backend_task:
+  script:
+    - export AWS_ACCESS_KEY_ID="" && export AWS_SECRET_ACCESS_KEY=""
+    - ~/vault-auth.sh ${AWS_ACCOUNT_NAME} administrator
+    - export AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text --profile ${AWS_ACCOUNT_NAME})
+    - aws eks update-kubeconfig --name common-dev --profile ${AWS_ACCOUNT_NAME} --role-arn arn:aws:iam::${AWS_ACCOUNT_ID}:role/VaultAWSRole
+    - echo ===Info=====
+    - echo overlay=${OVERLAY} appname=${APP_NAME} appimg=${CI_REGISTRY_IMAGE}:${CI_COMMIT_REF_NAME}-${CI_COMMIT_SHORT_SHA}
+    - echo ============
+
+    - cd bootstrap/backend/kustomize/${APP_NAME}
+    - (cd "overlays/${OVERLAY}" && kustomize edit set image ${APP_NAME}=${CI_REGISTRY_IMAGE}:${CI_COMMIT_REF_NAME}-${CI_COMMIT_SHORT_SHA})
+    - kustomize build overlays/${OVERLAY} | kubectl apply -f -
+
+backend-package:
+  stage: package
+  variables:
+    APP_NAME: ${MY_APP_NAME}
+  extends: .package_backend_task
+  except:
+    - merge_requests
+  only:
+    - deploytest
+    - develop
+    - main
+    - int
+    - stage
+
+backend-deploy:
+  stage: deploy
+  needs: [ "backend-package" ]
+  image: ${CI_REGISTRY}/devops/eks-tools:1.0.0
+  variables:
+    APP_NAME: ${MY_APP_NAME}
+  extends: .deploy_backend_task
+  except:
+    - merge_requests
+  only:
+    - deploytest
+    - develop
+    - main
+    - int
+    - stage

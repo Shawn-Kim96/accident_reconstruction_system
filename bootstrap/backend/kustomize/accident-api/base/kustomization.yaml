@@ -1,0 +1,16 @@
+namePrefix: ""
+commonLabels:
+  app.kubernetes.io/managed-by: kustomize
+  app.kubernetes.io/version: "1.0.0"
+  app.kubernetes.io/component: server
+  app.kubernetes.io/part-of: accident-api_test
+resources:
+  #- config-map.yaml
+  - deployment.yaml
+  - service.yaml
+  #- hpa.yaml
+  #- pdb.yaml
+  - virtual-service-http.yaml
+  #- destination-rules.yaml
+generatorOptions:
+  disableNameSuffixHash: true

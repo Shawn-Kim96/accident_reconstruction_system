@@ -1,0 +1,69 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  # namespace: umosfii-dev
+  name: accident-web
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: accident-web
+  strategy:
+    rollingUpdate:
+      maxSurge: 50%
+      maxUnavailable: 50%
+    type: RollingUpdate
+  template:
+    metadata:
+      labels:
+        app: accident-web
+        version: v0.0.1
+        env: dev
+    spec:
+      imagePullSecrets:
+        - name: regcred
+      containers:
+        - name: accident-web
+          image: "accident-web"
+          imagePullPolicy: Always
+          ports:
+            - name: http-port
+              containerPort: 80
+              protocol: TCP
+            # - name: grpc-web
+            #   containerPort: 11001
+            #   protocol: TCP
+          lifecycle:
+            preStop:
+              exec:
+                command: ["/bin/bash", "-c", "sleep 20"]
+          # readinessProbe:
+          #   failureThreshold: 3
+          #   httpGet:
+          #     path: /api_test/v1/accident-web/monitor/health
+          #     port: 8080
+          #     scheme: HTTP
+          #   initialDelaySeconds: 30
+          #   periodSeconds: 10
+          #   successThreshold: 1
+          #   timeoutSeconds: 5
+          # livenessProbe:
+          #   failureThreshold: 3
+          #   httpGet:
+          #     path: /api_test/v1/accident-web/monitor/health
+          #     port: 8080
+          #     scheme: HTTP
+          #   initialDelaySeconds: 30
+          #   periodSeconds: 30
+          #   successThreshold: 1
+          #   timeoutSeconds: 5
+          resources:
+            limits:
+              cpu: 1
+              memory: 500Mi
+            requests:
+              cpu: 1
+              memory: 500Mi
+      nodeSelector:
+        instanceType: m5.4xlarge
+      restartPolicy: Always
